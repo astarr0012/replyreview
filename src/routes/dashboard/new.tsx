@@ -4,23 +4,23 @@ import { sql } from "~/db";
 import { useState } from "react";
 
 const LANGUAGES = [
-  { value: "en", label: "English" },
-  { value: "es", label: "Spanish" },
-  { value: "fr", label: "French" },
-  { value: "de", label: "German" },
-  { value: "zh", label: "Chinese" },
-  { value: "ja", label: "Japanese" },
-  { value: "ko", label: "Korean" },
-  { value: "pt", label: "Portuguese" },
-  { value: "it", label: "Italian" },
-  { value: "ru", label: "Russian" },
-  { value: "ar", label: "Arabic" },
-  { value: "vi", label: "Vietnamese" },
-  { value: "th", label: "Thai" },
-  { value: "nl", label: "Dutch" },
-  { value: "pl", label: "Polish" },
-  { value: "tr", label: "Turkish" },
-  { value: "auto", label: "🌐 Auto-detect (match review language)" },
+  { value: "en", label: "🇺🇸 English", short: "EN" },
+  { value: "es", label: "🇪🇸 Spanish", short: "ES" },
+  { value: "fr", label: "🇫🇷 French", short: "FR" },
+  { value: "de", label: "🇩🇪 German", short: "DE" },
+  { value: "zh", label: "🇨🇳 Chinese", short: "ZH" },
+  { value: "ja", label: "🇯🇵 Japanese", short: "JA" },
+  { value: "ko", label: "🇰🇷 Korean", short: "KO" },
+  { value: "pt", label: "🇵🇹 Portuguese", short: "PT" },
+  { value: "it", label: "🇮🇹 Italian", short: "IT" },
+  { value: "ru", label: "🇷🇺 Russian", short: "RU" },
+  { value: "ar", label: "🇸🇦 Arabic", short: "AR" },
+  { value: "vi", label: "🇻🇳 Vietnamese", short: "VI" },
+  { value: "th", label: "🇹🇭 Thai", short: "TH" },
+  { value: "nl", label: "🇳🇱 Dutch", short: "NL" },
+  { value: "pl", label: "🇵🇱 Polish", short: "PL" },
+  { value: "tr", label: "🇹🇷 Turkish", short: "TR" },
+  { value: "auto", label: "🌐 Auto-detect (match review language)", short: "AUTO" },
 ];
 
 const LANGUAGE_NAMES: Record<string, string> = {
@@ -114,8 +114,8 @@ Never mention that you are an AI. Never use generic phrases like "We appreciate 
         `;
         if (review) {
                     await db`
-                      INSERT INTO responses (user_id, review_id, ai_generated_text, tone, status)
-                      VALUES ('00000000-0000-0000-0000-000000000000', ${review.id}, ${draft}, ${tone}, 'draft')
+                      INSERT INTO responses (user_id, review_id, ai_generated_text, tone, language, status)
+                      VALUES ('00000000-0000-0000-0000-000000000000', ${review.id}, ${draft}, ${tone}, ${language}, 'draft')
                       RETURNING id
                     `;
                     // Auto-create alert for negative reviews

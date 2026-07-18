@@ -90,6 +90,7 @@ const runMigrate = createServerFn({ method: "POST" }).handler(async () => {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`;
     await db`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS location_id UUID REFERENCES locations(id) ON DELETE SET NULL`;
+    await db`ALTER TABLE responses ADD COLUMN IF NOT EXISTS language TEXT NOT NULL DEFAULT 'en'`;
     await db`ALTER TABLE users ADD COLUMN IF NOT EXISTS active_location_id UUID REFERENCES locations(id) ON DELETE SET NULL`;
     return { ok: true, message: "All tables created successfully" };
   } catch (error) {
