@@ -61,6 +61,15 @@ const runMigrate = createServerFn({ method: "POST" }).handler(async () => {
       acknowledged_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`;
+    await db`CREATE TABLE IF NOT EXISTS support_tickets (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      subject TEXT NOT NULL DEFAULT '',
+      message TEXT NOT NULL DEFAULT '',
+      priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('normal', 'high', 'urgent')),
+      status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'resolved', 'closed')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`;
     return { ok: true, message: "All tables created successfully" };
   } catch (error) {
     console.error("[migrate] error:", error);
