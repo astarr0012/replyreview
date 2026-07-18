@@ -1,10 +1,22 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { sql } from "~/db";
 
 const getStats = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const db = sql();
+
+    // Pending alerts (reviews needing responses)
+    const pendingAlerts = await db`
+      SELECT a.id, a.type, a.priority, a.message, a.created_at,
+             r.platform, r.author_name, r.rating, r.review_text
+      FROM alerts a
+      LEFT JOIN reviews r ON a.review_id = r.id
+      WHERE a.acknowledged = false
+      ORDER BY a.priority DESC, a.created_at DESC
+      LIMIT 10
+    `;
+    const [alertCount] = await db`SELECT COUNT(*)::int as count FROM alerts WHERE acknowledged = false`;
 
     // Basic counts
     const [totalReviews] = await db`SELECT COUNT(*)::int as count FROM reviews`;
@@ -74,6 +86,11 @@ const getStats = createServerFn({ method: "GET" }).handler(async () => {
         week_start: String(r.week_start),
       })),
       platformBreakdown: platformBreakdown ?? [],
+      pendingAlerts: (pendingAlerts ?? []).map((a: any) => ({
+        ...a,
+        created_at: String(a.created_at),
+      })),
+      alertCount: alertCount?.count ?? 0,
       recentReviews: (recentReviews ?? []).map((r: any) => ({
         ...r,
         created_at: String(r.created_at),
@@ -95,6 +112,8 @@ const getStats = createServerFn({ method: "GET" }).handler(async () => {
       respondedCount: 0,
       ratingTrend: [],
       platformBreakdown: [],
+      pendingAlerts: [],
+      alertCount: 0,
       recentReviews: [],
     };
   }
@@ -273,6 +292,73 @@ function DashboardHome() {
         </div>
       )}
 
+      {/* Alert notifications */}
+      {stats.pendingAlerts.length > 0 && (
+        <div className="mt-12">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-semibold text-slate-900">Pending Alerts</h2>
+              <span className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700">
+                {stats.alertCount} needs attention
+              </span>
+            </div>
+            <Link to="/dashboard" className="text-sm font-medium text-emerald-600 hover:text-emerald-500">
+              Refresh →
+            </Link>
+          </div>
+          <div className="mt-4 space-y-3">
+            {stats.pendingAlerts.map((alert: any) => (
+              <div
+                key={alert.id}
+                className={`rounded-xl border p-4 ${
+                  alert.priority === "high" || alert.priority === "urgent"
+                    ? "border-red-200 bg-red-50"
+                    : "border-amber-200 bg-amber-50"
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertIcon priority={alert.priority} />
+                    <div>
+                      <span className="text-sm font-semibold text-slate-900">
+                        {alert.author_name || "Unknown"}
+                      </span>
+                      {alert.rating && <Stars rating={alert.rating} />}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {alert.platform && (
+                      <span className="rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200">
+                        {alert.platform}
+                      </span>
+                    )}
+                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                      alert.priority === "high" || alert.priority === "urgent"
+                        ? "bg-red-100 text-red-700"
+                        : "bg-amber-100 text-amber-700"
+                    }`}>
+                      {alert.priority}
+                    </span>
+                  </div>
+                </div>
+                <p className="mt-2 text-sm text-slate-600">{alert.message}</p>
+                {alert.review_text && (
+                  <p className="mt-1 text-xs text-slate-500 italic line-clamp-2">
+                    "{alert.review_text}"
+                  </p>
+                )}
+                <div className="mt-2 flex items-center gap-3 text-[11px] text-slate-400">
+                  <span>{formatTimeAgo(alert.created_at)}</span>
+                  <a href="/dashboard/new" className="font-medium text-emerald-600 hover:text-emerald-500">
+                    Respond now →
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Recent reviews */}
       <div className="mt-12">
         <div className="flex items-center justify-between">
@@ -406,6 +492,30 @@ function Stars({ rating }: { rating: number }) {
 function formatWeekLabel(dateStr: string) {
   const d = new Date(dateStr);
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function formatTimeAgo(dateStr: string) {
+  const now = Date.now();
+  const d = new Date(dateStr).getTime();
+  const diff = now - d;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function AlertIcon({ priority }: { priority: string }) {
+  const isUrgent = priority === "high" || priority === "urgent";
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`h-5 w-5 ${isUrgent ? "text-red-500" : "text-amber-500"}`}>
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
 }
 
 /* ---------- Inline SVG icons ---------- */

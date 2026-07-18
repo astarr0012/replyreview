@@ -55,9 +55,22 @@ async function run() {
       business_name TEXT NOT NULL DEFAULT '',
       sample_replies JSONB DEFAULT '[]',
       UNIQUE(user_id, name)
-    )`;
-    
-    console.log("Migration finished successfully!");
+          )`;
+
+            console.log("Creating alerts table...");
+            await db`CREATE TABLE IF NOT EXISTS alerts (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              review_id UUID REFERENCES reviews(id) ON DELETE CASCADE,
+              type TEXT NOT NULL DEFAULT 'new_review' CHECK (type IN ('new_review', 'negative_review', 'response_due')),
+              priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+              message TEXT NOT NULL DEFAULT '',
+              email_sent BOOLEAN NOT NULL DEFAULT false,
+              email_sent_at TIMESTAMPTZ,
+              acknowledged BOOLEAN NOT NULL DEFAULT false,
+              acknowledged_at TIMESTAMPTZ,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )`;
+            console.log("Migration finished successfully!");
   } catch (error) {
     console.error("Migration failed:", error);
     process.exit(1);

@@ -80,15 +80,30 @@ Never mention that you are an AI. Never use generic phrases like "We appreciate 
           RETURNING id
         `;
         if (review) {
-          await db`
-            INSERT INTO responses (user_id, review_id, ai_generated_text, tone, status)
-            VALUES ('00000000-0000-0000-0000-000000000000', ${review.id}, ${draft}, ${tone}, 'draft')
-          `;
-        }
-      } catch (dbErr) {
-        console.error("[generateResponse] db error:", dbErr);
-        // Non-blocking — still return the draft
-      }
+                    await db`
+                      INSERT INTO responses (user_id, review_id, ai_generated_text, tone, status)
+                      VALUES ('00000000-0000-0000-0000-000000000000', ${review.id}, ${draft}, ${tone}, 'draft')
+                    `;
+                    // Auto-create alert for negative reviews
+                    if (rating <= 2) {
+                      const alertMsg = `Negative ${rating}-star review from ${authorName || "a customer"} on ${platform} needs immediate attention.`;
+                      await db`
+                        INSERT INTO alerts (review_id, type, priority, message)
+                        VALUES (${review.id}, 'negative_review', 'high', ${alertMsg})
+                        ON CONFLICT DO NOTHING
+                      `;
+                    } else {
+                      await db`
+                        INSERT INTO alerts (review_id, type, priority, message)
+                        VALUES (${review.id}, 'new_review', 'normal', ${`New ${rating}-star review received from ${authorName || "a customer"} on ${platform}.`})
+                        ON CONFLICT DO NOTHING
+                      `;
+                    }
+                  }
+                } catch (dbErr) {
+                  console.error("[generateResponse] db error:", dbErr);
+                  // Non-blocking — still return the draft
+                }
 
       return { ok: true, response: draft, message: "" };
     } catch (err: any) {
