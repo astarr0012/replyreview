@@ -17,6 +17,7 @@ async function run() {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       email TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL DEFAULT '',
+      business_name TEXT NOT NULL DEFAULT '',
       stripe_customer_id TEXT,
       subscription_tier TEXT NOT NULL DEFAULT 'free' CHECK (subscription_tier IN ('free', 'starter', 'pro', 'agency')),
       subscription_status TEXT NOT NULL DEFAULT 'inactive' CHECK (subscription_status IN ('active', 'inactive', 'canceled', 'past_due')),
