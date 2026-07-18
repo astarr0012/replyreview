@@ -81,6 +81,29 @@ async function run() {
                       status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'resolved', 'closed')),
                       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     )`;
+                    console.log("Creating locations table...");
+                    await db`CREATE TABLE IF NOT EXISTS locations (
+                      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                      name TEXT NOT NULL DEFAULT '',
+                      address TEXT NOT NULL DEFAULT '',
+                      phone TEXT NOT NULL DEFAULT '',
+                      is_active BOOLEAN NOT NULL DEFAULT false,
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )`;
+                    console.log("Creating team_members table...");
+                    await db`CREATE TABLE IF NOT EXISTS team_members (
+                      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                      location_id UUID REFERENCES locations(id) ON DELETE SET NULL,
+                      name TEXT NOT NULL DEFAULT '',
+                      email TEXT NOT NULL DEFAULT '',
+                      role TEXT NOT NULL DEFAULT 'reviewer' CHECK (role IN ('owner', 'manager', 'reviewer')),
+                      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'declined')),
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )`;
+                    await db`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS location_id UUID REFERENCES locations(id) ON DELETE SET NULL`;
+                    await db`ALTER TABLE users ADD COLUMN IF NOT EXISTS active_location_id UUID REFERENCES locations(id) ON DELETE SET NULL`;
                     console.log("Migration finished successfully!");
   } catch (error) {
     console.error("Migration failed:", error);
