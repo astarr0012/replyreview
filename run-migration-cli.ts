@@ -105,6 +105,8 @@ async function run() {
                     await db`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS location_id UUID REFERENCES locations(id) ON DELETE SET NULL`;
                     await db`ALTER TABLE responses ADD COLUMN IF NOT EXISTS language TEXT NOT NULL DEFAULT 'en'`;
                     await db`ALTER TABLE users ADD COLUMN IF NOT EXISTS active_location_id UUID REFERENCES locations(id) ON DELETE SET NULL`;
+                    await db`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT NOT NULL DEFAULT ''`;
+                    await db`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT NOT NULL DEFAULT ''`;
                     console.log("Migration finished successfully!");
   } catch (error) {
     console.error("Migration failed:", error);
