@@ -3,6 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { sql } from "~/db";
 import { useState } from "react";
 import { getPaymentLink, getSubscriptionQuota, updateSubscriptionTier } from "~/routes/api/-stripe-checkout";
+import { getCampaignOverview, prepareTestEmail, prepareLaunchCampaign, simulateLaunchCampaign, markEmailsSent } from "~/routes/api/-email-campaign";
 
 const USER_ID = "00000000-0000-0000-0000-000000000000";
 
@@ -35,7 +36,9 @@ export const Route = createFileRoute("/dashboard/settings")({
   component: SettingsPage,
   loader: async () => {
     const [profile, quota] = await Promise.all([getProfile(), getSubscriptionQuota()]);
-    return { profile, quota };
+    let campaignOverview = null;
+    try { campaignOverview = await getCampaignOverview(); } catch { /* ignore */ }
+    return { profile, quota, campaignOverview };
   },
 });
 
@@ -61,6 +64,11 @@ function SettingsPage() {
   const [sandboxStatus, setSandboxStatus] = useState(initial?.subscription_status ?? "active");
   const [sandboxLoading, setSandboxLoading] = useState(false);
   const [sandboxMsg, setSandboxMsg] = useState<{ ok: boolean; message: string } | null>(null);
+
+  // Campaign state
+  const [campaignEmail, setCampaignEmail] = useState("");
+  const [campaignLoading, setCampaignLoading] = useState(false);
+  const [campaignMsg, setCampaignMsg] = useState<{ ok: boolean; message: string } | null>(null);
 
   if (!initial) {
     return (
@@ -295,6 +303,113 @@ function SettingsPage() {
           </p>
         )}
         {stripeMsg && <p className="mt-2 text-sm text-red-600">{stripeMsg}</p>}
+      </div>
+
+      {/* Email Campaign Section */}
+      <div className="mt-14 rounded-2xl border-2 border-dashed border-sky-300 bg-sky-50/50 p-6 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="rounded-xl bg-sky-100 p-2.5">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5 text-sky-700">
+              <path d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-sky-900">📢 Email Campaigns / Waitlist Launch</h3>
+            <p className="text-sm text-sky-700">Manage waitlist announcements and send launch emails to your subscribers.</p>
+          </div>
+        </div>
+
+        {/* Campaign overview stats */}
+        <div className="mt-5 grid gap-4 sm:grid-cols-3">
+          <div className="rounded-xl border border-sky-200 bg-white p-4 text-center">
+            <p className="text-xs font-medium uppercase tracking-wider text-sky-600">Waitlist Subscribers</p>
+            <p className="mt-1 text-3xl font-bold text-sky-900">{campaignOverview?.waitlistCount ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-sky-200 bg-white p-4 text-center">
+            <p className="text-xs font-medium uppercase tracking-wider text-sky-600">Campaigns Sent</p>
+            <p className="mt-1 text-3xl font-bold text-sky-900">{campaignOverview?.campaigns?.length ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-sky-200 bg-white p-4 text-center">
+            <p className="text-xs font-medium uppercase tracking-wider text-sky-600">Total Emails Sent</p>
+            <p className="mt-1 text-3xl font-bold text-sky-900">
+              {campaignOverview?.campaigns?.reduce((sum: number, c: any) => sum + c.success_count, 0) ?? 0}
+            </p>
+          </div>
+        </div>
+
+        {/* Test email send */}
+        <div className="mt-5">
+          <p className="text-sm font-medium text-sky-800">🔬 Send Test Email</p>
+          <p className="text-xs text-sky-600">Send a preview of the launch announcement to a single email address first.</p>
+          <div className="mt-2 flex gap-3">
+            <input type="email" placeholder="test@example.com" value={campaignEmail}
+              onChange={(e) => setCampaignEmail(e.target.value)}
+              className="block flex-1 rounded-xl border border-sky-200 bg-white px-4 py-2.5 text-sm shadow-sm focus:border-sky-500 focus:ring-2 focus:ring-sky-200" />
+            <button onClick={async () => {
+              setCampaignLoading(true); setCampaignMsg(null);
+              const res = await prepareTestEmail({ data: { email: campaignEmail } });
+              setCampaignMsg(res);
+              if (res.ok && "html" in res) {
+                // The server prepared the email — ready for sending
+              }
+              setCampaignLoading(false);
+            }} disabled={campaignLoading || !campaignEmail.includes("@")}
+              className="rounded-full bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-500 disabled:opacity-60">
+              {campaignLoading ? "Preparing..." : "Send Test 📧"}
+            </button>
+          </div>
+        </div>
+
+        {/* Launch campaign */}
+        <div className="mt-5 border-t border-sky-200 pt-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-sky-800">📢 Launch Announcement Campaign</p>
+              <p className="text-xs text-sky-600">Send the full launch announcement to all waitlist subscribers.</p>
+            </div>
+            <button onClick={async () => {
+              if (!confirm("Send launch announcement to ALL waitlist subscribers?")) return;
+              setCampaignLoading(true); setCampaignMsg(null);
+              const res = await prepareLaunchCampaign();
+              setCampaignMsg(res);
+              if (res.ok && "emails" in res && Array.isArray(res.emails)) {
+                // Campaign prepared — ready to send via email tool
+              }
+              setCampaignLoading(false);
+            }} disabled={campaignLoading || (campaignOverview?.waitlistCount ?? 0) === 0}
+              className="rounded-full bg-sky-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-600 disabled:opacity-60">
+              {campaignLoading ? "Preparing..." : "📢 Send Launch Campaign"}
+            </button>
+          </div>
+        </div>
+
+        {/* Campaign history */}
+        {campaignOverview?.campaigns && campaignOverview.campaigns.length > 0 && (
+          <div className="mt-5 border-t border-sky-200 pt-5">
+            <p className="text-sm font-medium text-sky-800">Campaign History</p>
+            <div className="mt-2 space-y-2">
+              {campaignOverview.campaigns.map((c: any) => (
+                <div key={c.id} className="flex items-center justify-between rounded-lg border border-sky-100 bg-white px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-slate-900 capitalize">{c.type.replace(/_/g, " ")}</p>
+                    <p className="text-xs text-slate-500">{c.sent_to === "all" ? `Sent to ${c.recipient_count} subscribers` : `Sent to ${c.sent_to}`}</p>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className="text-emerald-600">{c.success_count} sent</span>
+                    {c.fail_count > 0 && <span className="text-red-600">{c.fail_count} failed</span>}
+                    <span className="text-slate-400">{new Date(c.created_at).toLocaleDateString()}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {campaignMsg && (
+          <p className={`mt-3 text-sm font-medium ${campaignMsg.ok ? "text-emerald-700" : "text-red-700"}`}>
+            {campaignMsg.message}
+          </p>
+        )}
       </div>
     </div>
   );
