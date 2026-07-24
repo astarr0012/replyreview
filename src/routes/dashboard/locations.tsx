@@ -136,22 +136,12 @@ async function seedSampleReviews(locationId: string, platform: string) {
     { author: "Sarah Chen", rating: 5, text: "Best place in town! I've been coming here for years and they never disappoint.", date: "2026-07-10" },
     { author: "Mike Thompson", rating: 3, text: "Decent experience. The product was good but the service could be faster. Would try again.", date: "2026-07-08" },
     { author: "Emily Davis", rating: 2, text: "Had some issues with my order. The staff was apologetic but it took longer than expected to resolve.", date: "2026-07-05" },
-    { author: "David Kim", rating: 5, text: "Absolutely love this place! The attention to detail and customer care is unmatched.", date: "2026-07-03" },
-    { author: "Lisa Anderson", rating: 4, text: "Very satisfied with my visit. Clean environment and knowledgeable staff.", date: "2026-06-30" },
-    { author: "Robert Martinez", rating: 1, text: "Very disappointed. The service was slow and the staff seemed disinterested. Not coming back.", date: "2026-06-28" },
-    { author: "Jennifer Brown", rating: 5, text: "Exceeded my expectations! The team really cares about their customers.", date: "2026-06-25" },
-    { author: "Chris Taylor", rating: 4, text: "Good value for money. Would recommend to friends and family.", date: "2026-06-22" },
   ] : [
     { author: "Alex Rivera", rating: 5, text: "Hands down the best service in town! Five stars all the way!", date: "2026-07-14" },
     { author: "Jordan Lee", rating: 4, text: "Really impressed with the quality. A few small improvements would make it perfect.", date: "2026-07-11" },
     { author: "Taylor Brooks", rating: 5, text: "I've been to many places but this one stands out. Exceptional quality and service.", date: "2026-07-09" },
-    { author: "Morgan Reed", rating: 3, text: "It was okay. Nothing special but nothing bad either. Average experience.", date: "2026-07-07" },
-    { author: "Casey Morgan", rating: 2, text: "Not what I expected. The website showed different prices than what I was charged.", date: "2026-07-04" },
     { author: "Riley Cooper", rating: 5, text: "Incredible experience from start to finish! Highly recommend to everyone.", date: "2026-07-02" },
-    { author: "Avery Quinn", rating: 4, text: "Great atmosphere and friendly staff. Will definitely return.", date: "2026-06-29" },
     { author: "Drew Harper", rating: 1, text: "Terrible experience. Would give zero stars if possible. Avoid this place.", date: "2026-06-27" },
-    { author: "Parker Stone", rating: 5, text: "Perfect every single time. This is what excellent service looks like.", date: "2026-06-24" },
-    { author: "Sydney Blake", rating: 4, text: "Really good! The team was accommodating and professional.", date: "2026-06-21" },
   ];
 
   // Check if reviews already exist for this location/platform combo
@@ -161,12 +151,21 @@ async function seedSampleReviews(locationId: string, platform: string) {
 
   if ((existing?.count ?? 0) === 0) {
     for (const review of sampleReviews) {
-      await db`
+      const [inserted] = await db`
         INSERT INTO reviews (user_id, location_id, platform, author_name, rating, review_text, created_at)
         VALUES (${USER_ID}, ${locationId}, ${platform}, ${review.author}, ${review.rating}, ${review.text}, ${review.date}::timestamptz)
+        RETURNING id
       `;
+      // Create alert for each seeded review
+      if (inserted) {
+        if (review.rating <= 2) {
+          await db`INSERT INTO alerts (review_id, type, priority, message) VALUES (${inserted.id}, 'negative_review', 'high', ${`Urgent: Negative ${review.rating}-star review from ${review.author} on ${platform} just synced!`}) ON CONFLICT DO NOTHING`;
+        } else {
+          await db`INSERT INTO alerts (review_id, type, priority, message) VALUES (${inserted.id}, 'new_review', 'normal', ${`New ${review.rating}-star review synced from ${review.author} on ${platform}.`}) ON CONFLICT DO NOTHING`;
+        }
+      }
     }
-    console.log(`[seed] Seeded ${sampleReviews.length} ${platform} reviews for location ${locationId}`);
+    console.log(`[seed] Seeded ${sampleReviews.length} ${platform} reviews for location ${locationId} with alerts`);
   }
 }
 
@@ -293,28 +292,31 @@ function LocationsPage() {
                   {/* Google */}
                   <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/50 px-3 py-2">
                     <div className="flex items-center gap-2">
-                      <span className="grid h-6 w-6 place-items-center rounded-full bg-[#4285F4] text-[9px] font-bold text-white">G</span>
-                      <span className="text-xs font-medium text-slate-700">Google</span>
-                      {googleConn?.connected ? (
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-semibold text-emerald-700">Connected</span>
-                      ) : (
-                        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[9px] font-semibold text-slate-500">Not connected</span>
-                      )}
+                      <span className="grid h-7 w-7 place-items-center rounded-full bg-[#4285F4] text-[10px] font-bold text-white">G</span>
+                      <div>
+                        <span className="text-xs font-medium text-slate-700">Google Business Profile</span>
+                        {googleConn?.connected && (
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            <span className="text-[9px] font-semibold text-emerald-700">Connected &amp; Active</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center gap-1">
                       {googleConn?.connected ? (
                         <>
                           <button onClick={() => handleSync(loc.id, "google")} disabled={syncing === `${loc.id}-google`}
-                            className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-200 disabled:opacity-60">
-                            {syncing === `${loc.id}-google` ? "..." : "Sync"}
+                            className="rounded-full bg-emerald-500 px-3 py-1.5 text-[10px] font-semibold text-white shadow-sm hover:bg-emerald-400 disabled:opacity-60">
+                            {syncing === `${loc.id}-google` ? "⟳ Syncing..." : "⟳ Sync"}
                           </button>
                           <button onClick={() => handleDisconnect(loc.id, "google")}
-                            className="rounded-full px-2.5 py-1 text-[10px] font-semibold text-red-500 hover:bg-red-50">Disconnect</button>
+                            className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50">Disconnect</button>
                         </>
                       ) : (
                         <button onClick={() => handleConnect(loc.id, "google")} disabled={connecting === `${loc.id}-google`}
-                          className="rounded-full bg-[#4285F4] px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-[#3367D6] disabled:opacity-60">
-                          {connecting === `${loc.id}-google` ? "..." : "Connect"}
+                          className="rounded-full bg-[#4285F4] px-3 py-1.5 text-[10px] font-semibold text-white shadow-sm hover:bg-[#3367D6] disabled:opacity-60">
+                          {connecting === `${loc.id}-google` ? "Connecting..." : "🔗 Connect Google Business Profile"}
                         </button>
                       )}
                     </div>
@@ -322,28 +324,31 @@ function LocationsPage() {
                   {/* Yelp */}
                   <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/50 px-3 py-2">
                     <div className="flex items-center gap-2">
-                      <span className="grid h-6 w-6 place-items-center rounded-full bg-[#d32323] text-[9px] font-bold text-white">Y</span>
-                      <span className="text-xs font-medium text-slate-700">Yelp</span>
-                      {yelpConn?.connected ? (
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-semibold text-emerald-700">Connected</span>
-                      ) : (
-                        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[9px] font-semibold text-slate-500">Not connected</span>
-                      )}
+                      <span className="grid h-7 w-7 place-items-center rounded-full bg-[#d32323] text-[10px] font-bold text-white">Y</span>
+                      <div>
+                        <span className="text-xs font-medium text-slate-700">Yelp Business Page</span>
+                        {yelpConn?.connected && (
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            <span className="text-[9px] font-semibold text-emerald-700">Connected &amp; Active</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center gap-1">
                       {yelpConn?.connected ? (
                         <>
                           <button onClick={() => handleSync(loc.id, "yelp")} disabled={syncing === `${loc.id}-yelp`}
-                            className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-200 disabled:opacity-60">
-                            {syncing === `${loc.id}-yelp` ? "..." : "Sync"}
+                            className="rounded-full bg-emerald-500 px-3 py-1.5 text-[10px] font-semibold text-white shadow-sm hover:bg-emerald-400 disabled:opacity-60">
+                            {syncing === `${loc.id}-yelp` ? "⟳ Syncing..." : "⟳ Sync"}
                           </button>
                           <button onClick={() => handleDisconnect(loc.id, "yelp")}
-                            className="rounded-full px-2.5 py-1 text-[10px] font-semibold text-red-500 hover:bg-red-50">Disconnect</button>
+                            className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50">Disconnect</button>
                         </>
                       ) : (
                         <button onClick={() => handleConnect(loc.id, "yelp")} disabled={connecting === `${loc.id}-yelp`}
-                          className="rounded-full bg-[#d32323] px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-[#b01e1e] disabled:opacity-60">
-                          {connecting === `${loc.id}-yelp` ? "..." : "Connect"}
+                          className="rounded-full bg-[#d32323] px-3 py-1.5 text-[10px] font-semibold text-white shadow-sm hover:bg-[#b01e1e] disabled:opacity-60">
+                          {connecting === `${loc.id}-yelp` ? "Connecting..." : "🔗 Connect Yelp Business Page"}
                         </button>
                       )}
                     </div>
