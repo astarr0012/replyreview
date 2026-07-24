@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { sql } from "~/db";
-import { useState } from "react";
+import { useState, useRef } from "react";
 
 const LANGUAGES = [
   { value: "en", label: "🇺🇸 English", short: "EN" },
@@ -46,6 +46,40 @@ const generateResponse = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { reviewText, rating, platform, tone, businessName, authorName, language } = data;
     if (!reviewText) return { ok: false, response: "", message: "Review text is required." };
+
+    // Quota enforcement
+    try {
+      const db = sql();
+      const [user] = await db`
+        SELECT subscription_tier, subscription_status FROM users WHERE id = '00000000-0000-0000-0000-000000000000'
+      `;
+      const tier = user?.subscription_tier ?? "free";
+      const status = user?.subscription_status ?? "active";
+
+      if (status === "canceled" || status === "past_due") {
+        return { ok: false, response: "", message: `Your subscription is ${status}. Renew to continue generating responses.` };
+      }
+
+      const limits: Record<string, number> = { free: 0, starter: 30, pro: 100, agency: 500 };
+      const limit = limits[tier] ?? 0;
+
+      if (limit === 0) {
+        return { ok: false, response: "", message: tier === "free" ? "Free plan does not include response generation. Upgrade to start." : "No response limit configured." };
+      }
+
+      const [usage] = await db`
+        SELECT COUNT(*)::int as count FROM responses
+        WHERE user_id = '00000000-0000-0000-0000-000000000000'
+          AND created_at >= DATE_TRUNC('month', NOW())
+      `;
+
+      if ((usage?.count ?? 0) >= limit) {
+        return { ok: false, response: "", message: `You've reached your monthly limit of ${limit} responses. Upgrade to continue generating.` };
+      }
+    } catch (err) {
+      console.error("[quota] error:", err);
+      // Non-blocking — allow generation if quota check fails
+    }
 
     const toneGuide: Record<string, string> = {
       warm: "Warm and friendly — like greeting a regular customer.",
@@ -104,6 +138,8 @@ Never mention that you are an AI. Never use generic phrases like "We appreciate 
         }
       }
 
+      let reviewId: string | null = null;
+
       // Save the review and response to the database
       try {
         const db = sql();
@@ -113,6 +149,7 @@ Never mention that you are an AI. Never use generic phrases like "We appreciate 
           RETURNING id
         `;
         if (review) {
+                    reviewId = review.id;
                     await db`
                       INSERT INTO responses (user_id, review_id, ai_generated_text, tone, language, status)
                       VALUES ('00000000-0000-0000-0000-000000000000', ${review.id}, ${draft}, ${tone}, ${language}, 'draft')
@@ -139,7 +176,7 @@ Never mention that you are an AI. Never use generic phrases like "We appreciate 
                   // Non-blocking — still return the draft
                 }
 
-      return { ok: true, response: draft, message: "", reviewId: review?.id || null };
+      return { ok: true, response: draft, message: "", reviewId };
     } catch (err: any) {
       console.error("[generateResponse] general error:", err);
       return { ok: false, response: "", message: err.message || "Failed to generate response." };
@@ -212,6 +249,15 @@ function NewResponse() {
   const [approveLoading, setApproveLoading] = useState(false);
   const [approveMsg, setApproveMsg] = useState<string | null>(null);
   const [detectedLang, setDetectedLang] = useState<string | null>(null);
+  const [editedDraft, setEditedDraft] = useState("");
+  const [regenerating, setRegenerating] = useState(false);
+
+  // Sync editedDraft when a new result comes in
+  const prevResultRef = useRef(result?.response);
+  if (result?.response && result.response !== prevResultRef.current) {
+    prevResultRef.current = result.response;
+    setEditedDraft(result.response);
+  }
 
   const update = (field: string, value: string) => setForm((f) => ({ ...f, [field]: value }));
 
@@ -226,12 +272,12 @@ function NewResponse() {
   }
 
   async function handleApprove() {
-    if (!result?.response) return;
+    if (!editedDraft) return;
     setApproveLoading(true);
     setApproveMsg(null);
     const res = await approveAndPost({
       data: {
-        responseText: result.response,
+        responseText: editedDraft,
         reviewText: form.reviewText,
         platform: form.platform,
         authorName: form.authorName,
@@ -241,6 +287,17 @@ function NewResponse() {
     });
     setApproveMsg(res.message);
     setApproveLoading(false);
+  }
+
+  async function handleRegenerate() {
+    setRegenerating(true);
+    const res = await generateResponse({ data: form });
+    if (res.ok && res.response) {
+      setResult(res);
+      setEditedDraft(res.response);
+      setApproveMsg(null);
+    }
+    setRegenerating(false);
   }
 
   return (
@@ -343,16 +400,27 @@ function NewResponse() {
                     Response generated in {form.language === "auto" ? "auto-detected" : LANGUAGE_NAMES[form.language] || "English"}
                   </div>
                 )}
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800">{result.response}</p>
-                </div>
+                <textarea
+                  value={editedDraft}
+                  onChange={(e) => setEditedDraft(e.target.value)}
+                  rows={6}
+                  className="w-full rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-relaxed text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200 resize-y"
+                />
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
-                    onClick={() => navigator.clipboard.writeText(result.response)}
+                    onClick={() => navigator.clipboard.writeText(editedDraft)}
                     className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
                     Copy to clipboard
+                  </button>
+                  <button
+                    onClick={handleRegenerate}
+                    disabled={regenerating}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" /></svg>
+                    {regenerating ? "Regenerating..." : "Regenerate"}
                   </button>
                   <button
                     onClick={handleApprove}

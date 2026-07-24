@@ -3,145 +3,40 @@ import { sql } from "~/db";
 
 const USER_ID = "00000000-0000-0000-0000-000000000000";
 
-/* Stripe price IDs — set these via environment or use test-mode defaults */
-const STRIPE_PRICES: Record<string, string> = {
-  starter: process.env.STRIPE_PRICE_STARTER || "",
-  pro: process.env.STRIPE_PRICE_PRO || "",
-  agency: process.env.STRIPE_PRICE_AGENCY || "",
+/* Stripe Payment Links — provided by the owner */
+const STRIPE_PAYMENT_LINKS: Record<string, string> = {
+  starter: "https://buy.stripe.com/00w5kDaOlcWtgzn3vJ7kc03",
+  pro: "https://buy.stripe.com/5kQ00j2hP6y55UJgiv7kc04",
+  agency: "https://buy.stripe.com/bJe3cv4pXe0xfvj2rF7kc05",
 };
 
-const PRICE_TO_TIER: Record<string, string> = {};
-// Reverse map built from STRIPE_PRICES on first call
+/* Tier limits for quota enforcement */
+const TIER_LIMITS: Record<string, { label: string; responses: number; locations: number }> = {
+  free: { label: "Free", responses: 0, locations: 0 },
+  starter: { label: "Starter", responses: 30, locations: 0 },
+  pro: { label: "Pro", responses: 100, locations: 3 },
+  agency: { label: "Agency", responses: 500, locations: 999 },
+};
 
-function getStripe() {
-  const key = process.env.STRIPE_SECRET_KEY;
-  if (!key) return null;
-  // Lazy-init reverse map
-  if (Object.keys(PRICE_TO_TIER).length === 0) {
-    for (const [tier, priceId] of Object.entries(STRIPE_PRICES)) {
-      if (priceId) PRICE_TO_TIER[priceId] = tier;
-    }
-  }
-  const Stripe = require("stripe");
-  return new Stripe(key);
-}
-
-export const createStripeCheckout = createServerFn({ method: "POST" })
-  .validator((data: unknown) => {
-    const d = data as any;
-    return {
-      tier: String(d.tier ?? "starter"),
-      successUrl: String(d.successUrl ?? "/dashboard/settings?checkout=success"),
-      cancelUrl: String(d.cancelUrl ?? "/dashboard/settings?checkout=canceled"),
-    };
-  })
+/* Get the payment link for a given tier */
+export const getPaymentLink = createServerFn({ method: "POST" })
+  .validator((data: any) => ({ tier: String(data.tier ?? "starter") }))
   .handler(async ({ data }) => {
-    try {
-      const stripe = getStripe();
-      if (!stripe) {
-        // No Stripe key — simulate upgrade for development
-        const db = sql();
-        await db`
-          UPDATE users SET 
-            subscription_tier = ${data.tier},
-            subscription_status = 'active',
-            stripe_customer_id = 'dev_mode',
-            stripe_subscription_id = 'dev_mode'
-          WHERE id = ${USER_ID}
-        `;
-        return { ok: true, url: "/dashboard/settings?checkout=success" };
-      }
-
-      const priceId = STRIPE_PRICES[data.tier];
-      if (!priceId) {
-        return { ok: false, message: `No price configured for tier: ${data.tier}` };
-      }
-
-      // Get or create customer
-      const db = sql();
-      const [user] = await db`
-        SELECT stripe_customer_id, email FROM users WHERE id = ${USER_ID}
-      `;
-
-      let customerId = user?.stripe_customer_id || "";
-
-      if (!customerId) {
-        const customer = await stripe.customers.create({
-          email: user?.email || "customer@example.com",
-          metadata: { user_id: USER_ID },
-        });
-        customerId = customer.id;
-        await db`UPDATE users SET stripe_customer_id = ${customerId} WHERE id = ${USER_ID}`;
-      }
-
-      // Create checkout session
-      const session = await stripe.checkout.sessions.create({
-        customer: customerId,
-        mode: "subscription",
-        line_items: [{ price: priceId, quantity: 1 }],
-        success_url: data.successUrl,
-        cancel_url: data.cancelUrl,
-        metadata: { user_id: USER_ID, tier: data.tier },
-      });
-
-      return { ok: true, url: session.url };
-    } catch (err: any) {
-      console.error("[createCheckout] error:", err);
-      return { ok: false, message: err.message || "Failed to create checkout session." };
-    }
+    const link = STRIPE_PAYMENT_LINKS[data.tier];
+    if (!link) return { ok: false, message: `No payment link for tier: ${data.tier}` };
+    return { ok: true, url: link };
   });
 
-export const createBillingPortal = createServerFn({ method: "POST" })
-  .validator((data: unknown) => {
-    const d = data as any;
-    return {
-      returnUrl: String(d.returnUrl ?? "/dashboard/settings"),
-    };
-  })
-  .handler(async ({ data }) => {
-    try {
-      const stripe = getStripe();
-      if (!stripe) {
-        return { ok: false, message: "Stripe not configured. Use settings to manage subscription." };
-      }
-
-      const db = sql();
-      const [user] = await db`
-        SELECT stripe_customer_id FROM users WHERE id = ${USER_ID}
-      `;
-
-      if (!user?.stripe_customer_id || user.stripe_customer_id === "dev_mode") {
-        return { ok: false, message: "No billing customer found." };
-      }
-
-      const session = await stripe.billingPortal.sessions.create({
-        customer: user.stripe_customer_id,
-        return_url: data.returnUrl,
-      });
-
-      return { ok: true, url: session.url };
-    } catch (err: any) {
-      console.error("[createPortal] error:", err);
-      return { ok: false, message: err.message || "Failed to open billing portal." };
-    }
-  });
-
+/* Get subscription quota with usage */
 export const getSubscriptionQuota = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const db = sql();
     const [user] = await db`
-      SELECT subscription_tier FROM users WHERE id = ${USER_ID}
+      SELECT subscription_tier, subscription_status FROM users WHERE id = ${USER_ID}
     `;
     const tier = user?.subscription_tier ?? "free";
-
-    const limits: Record<string, { label: string; responses: number }> = {
-      free: { label: "Free", responses: 0 },
-      starter: { label: "Starter", responses: 30 },
-      pro: { label: "Pro", responses: 100 },
-      agency: { label: "Agency", responses: 500 },
-    };
-
-    const limit = limits[tier] || limits.free;
+    const status = user?.subscription_status ?? "active";
+    const limit = TIER_LIMITS[tier] || TIER_LIMITS.free;
 
     // Count current month's responses
     const [usage] = await db`
@@ -150,15 +45,84 @@ export const getSubscriptionQuota = createServerFn({ method: "GET" }).handler(as
         AND created_at >= DATE_TRUNC('month', NOW())
     `;
 
+    // Count locations
+    const [locCount] = await db`
+      SELECT COUNT(*)::int as count FROM locations WHERE user_id = ${USER_ID}
+    `;
+
     return {
       tier,
+      status,
       label: limit.label,
       limit: limit.responses,
       used: usage?.count ?? 0,
       remaining: Math.max(0, limit.responses - (usage?.count ?? 0)),
+      locationLimit: limit.locations,
+      locationCount: locCount?.count ?? 0,
+      isLimitReached: limit.responses > 0 && (usage?.count ?? 0) >= limit.responses,
       isUnlimited: limit.responses === 0 && tier === "free" ? false : limit.responses === 0,
     };
   } catch {
-    return { tier: "free", label: "Free", limit: 0, used: 0, remaining: 0, isUnlimited: false };
+    return { tier: "free", status: "active", label: "Free", limit: 0, used: 0, remaining: 0, locationLimit: 0, locationCount: 0, isLimitReached: false, isUnlimited: false };
   }
 });
+
+/* Check if user can generate a response */
+export const canGenerateResponse = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const db = sql();
+    const [user] = await db`
+      SELECT subscription_tier, subscription_status FROM users WHERE id = ${USER_ID}
+    `;
+    const tier = user?.subscription_tier ?? "free";
+    const status = user?.subscription_status ?? "active";
+
+    if (status === "canceled" || status === "past_due") {
+      return { allowed: false, reason: "Your subscription is " + status + ". Renew to continue generating responses." };
+    }
+
+    const limit = TIER_LIMITS[tier] || TIER_LIMITS.free;
+    if (limit.responses === 0) {
+      return { allowed: false, reason: tier === "free" ? "Free plan does not include response generation. Upgrade to start." : "No response limit configured." };
+    }
+
+    const [usage] = await db`
+      SELECT COUNT(*)::int as count FROM responses
+      WHERE user_id = ${USER_ID}
+        AND created_at >= DATE_TRUNC('month', NOW())
+    `;
+
+    if ((usage?.count ?? 0) >= limit.responses) {
+      return { allowed: false, reason: `You've reached your monthly limit of ${limit.responses} responses. Upgrade to continue generating.` };
+    }
+
+    return { allowed: true, remaining: limit.responses - (usage?.count ?? 0) };
+  } catch {
+    return { allowed: false, reason: "Could not verify subscription." };
+  }
+});
+
+/* Dev Sandbox: instantly switch subscription tier for testing */
+export const updateSubscriptionTier = createServerFn({ method: "POST" })
+  .validator((data: any) => ({
+    tier: String(data.tier ?? "free"),
+    status: String(data.status ?? "active"),
+  }))
+  .handler(async ({ data }) => {
+    try {
+      const db = sql();
+      const validTiers = ["free", "starter", "pro", "agency"];
+      const validStatuses = ["active", "canceled", "past_due", "inactive"];
+
+      if (!validTiers.includes(data.tier)) return { ok: false, message: "Invalid tier." };
+      if (!validStatuses.includes(data.status)) return { ok: false, message: "Invalid status." };
+
+      await db`
+        UPDATE users SET subscription_tier = ${data.tier}, subscription_status = ${data.status}
+        WHERE id = ${USER_ID}
+      `;
+      return { ok: true, message: `Subscription updated to ${data.tier} (${data.status})` };
+    } catch (err: any) {
+      return { ok: false, message: err.message || "Failed to update." };
+    }
+  });
