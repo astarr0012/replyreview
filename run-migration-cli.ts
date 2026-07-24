@@ -107,6 +107,19 @@ async function run() {
                     await db`ALTER TABLE users ADD COLUMN IF NOT EXISTS active_location_id UUID REFERENCES locations(id) ON DELETE SET NULL`;
                     await db`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT NOT NULL DEFAULT ''`;
                     await db`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT NOT NULL DEFAULT ''`;
+                    console.log("Creating platform_connections table...");
+                    await db`CREATE TABLE IF NOT EXISTS platform_connections (
+                      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                      location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+                      platform TEXT NOT NULL CHECK (platform IN ('google', 'yelp')),
+                      access_token TEXT NOT NULL DEFAULT '',
+                      refresh_token TEXT NOT NULL DEFAULT '',
+                      token_expires_at TIMESTAMPTZ,
+                      connected BOOLEAN NOT NULL DEFAULT false,
+                      connected_at TIMESTAMPTZ,
+                      last_synced_at TIMESTAMPTZ,
+                      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )`;
                     console.log("Migration finished successfully!");
   } catch (error) {
     console.error("Migration failed:", error);
